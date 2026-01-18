@@ -21,14 +21,19 @@ git clone https://github.com/UserNJK/ResearchAssistant.git
 cd ResearchAssistant
 ```
 
-2. Install dependencies:
+2. Install dependencies with PDM (preferred):
 ```bash
-pip install -r requirements.txt
+# Install PDM if you don't have it yet
+pip install --user pdm
+
+# Install project dependencies and create a local environment
+pdm install
 ```
 
-3. Install the package:
+3. Install the package for development (make the CLI entrypoint available):
 ```bash
-pip install -e .
+pdm develop
+# Run the CLI via: pdm run research-assistant research "your topic"
 ```
 
 ### Basic Usage

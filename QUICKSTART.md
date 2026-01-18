@@ -9,11 +9,14 @@ Get started with Research Assistant in 5 minutes!
 git clone https://github.com/UserNJK/ResearchAssistant.git
 cd ResearchAssistant
 
-# Install dependencies
-pip install -r requirements.txt
+# Install PDM (one-time)
+pip install --user pdm
 
-# Install the package
-pip install -e .
+# Install dependencies and set up the project environment
+pdm install
+
+# Install package in development mode
+pdm develop
 ```
 
 ## Your First Research Query

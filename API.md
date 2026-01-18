@@ -13,12 +13,19 @@ This document describes how to use Research Assistant programmatically in your P
 ## Installation
 
 ```bash
-pip install -e .
+# Install PDM if necessary
+pip install --user pdm
+
+# Install dependencies and set up the project
+pdm install
+
+# Install package in development mode (editable)
+pdm develop
 ```
 
-Or add to your `requirements.txt`:
+Or add the project as a dependency via VCS using PDM:
 ```
-research-assistant @ git+https://github.com/UserNJK/ResearchAssistant.git
+pdm add git+https://github.com/UserNJK/ResearchAssistant.git
 ```
 
 ## Configuration
