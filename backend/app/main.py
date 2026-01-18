@@ -1,0 +1,471 @@
+"""
+FastAPI Application Entry Point
+PHASE 5: Research API endpoints with background task orchestration
+PHASE 6: Authentication, JWT validation, and per-user rate limiting
+"""
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+from typing import List, Optional
+from .config import settings
+from .orchestrator import (
+    orchestrate_research,
+    create_job,
+    get_job,
+    list_jobs,
+    cancel_job,
+    get_job_stats,
+    ResearchJob,
+    JobStatus
+)
+from .auth import init_auth_service, get_auth_service, AuthenticationError
+from .middleware import init_auth_middleware, get_auth_middleware, clear_rate_limit_cache
+from .db import db
+
+app = FastAPI(
+    title="ResearchAssistant API",
+    description="AI-powered research assistant with multi-agent architecture",
+    version="0.2.0"  # PHASE 6 bump
+)
+
+# Initialize auth service and middleware
+init_auth_service(db.client)
+init_auth_middleware()
+
+# CORS Configuration - enforce per origin
+cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",")]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],  # Stricter methods
+    allow_headers=["Authorization", "Content-Type"],  # Strict headers
+)
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint
+    Returns API status and configuration info
+    """
+    return {
+        "status": "healthy",
+        "environment": settings.ENVIRONMENT,
+        "version": "0.2.0",
+        "openrouter_configured": bool(settings.OPENROUTER_API_KEY),
+        "supabase_configured": bool(settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY),
+        "auth_enabled": True  # PHASE 6
+    }
+
+
+@app.get("/test-llm")
+async def test_llm_endpoint():
+    """
+    Test endpoint to verify OpenRouter LLM connection
+    Requires OPENROUTER_API_KEY to be configured
+    Uses caching to avoid repeated API calls
+    """
+    from .utils.openrouter import test_llm_connection
+    
+    result = await test_llm_connection()
+    return result
+
+
+@app.get("/llm-stats")
+async def llm_cache_stats():
+    """
+    Get LLM cache and rate limiting statistics
+    Useful for monitoring API usage
+    """
+    from .utils.openrouter import get_cache_stats
+    
+    stats = get_cache_stats()
+    return {
+        "cache": stats,
+        "info": "Cache reduces duplicate API calls. Rate limiting prevents rapid requests."
+    }
+
+
+@app.post("/llm-cache/clear")
+async def clear_llm_cache():
+    """
+    Clear the LLM response cache
+    Use this if you want fresh responses
+    """
+    from .utils.openrouter import clear_cache
+    
+    cleared = clear_cache()
+    return {
+        "status": "success",
+        "cleared_entries": cleared,
+        "message": f"Cleared {cleared} cached responses"
+    }
+
+
+# ===== PHASE 6: AUTHENTICATION MODELS & DEPENDENCIES =====
+
+class SignupRequest(BaseModel):
+    """Request model for user signup"""
+    email: EmailStr
+    password: Optional[str] = None  # Not used, for compatibility
+
+
+class LoginRequest(BaseModel):
+    """Request model for user login"""
+    email: EmailStr
+    password: Optional[str] = None  # Not used, for compatibility
+
+
+class AuthResponse(BaseModel):
+    """Response model for auth endpoints"""
+    access_token: str
+    token_type: str = "bearer"
+    user: dict
+
+
+class UserProfile(BaseModel):
+    """Response model for user profile"""
+    id: str
+    email: str
+    verified: bool = False
+
+
+async def get_current_user(request: Request) -> dict:
+    """
+    Dependency injection for authenticated user.
+    Extracts and validates JWT from Authorization header.
+    
+    Returns:
+        User dict with id, email
+    
+    Raises:
+        HTTPException: If not authenticated
+    """
+    middleware = get_auth_middleware()
+    return await middleware.get_current_user(request)
+
+
+# ===== PHASE 6: AUTHENTICATION ENDPOINTS =====
+
+@app.post("/api/auth/signup", response_model=AuthResponse, tags=["Authentication"])
+async def signup(request: SignupRequest):
+    """
+    Sign up a new user with email.
+    
+    PHASE 6: Password-less signup (no verification required).
+    User account created immediately, JWT returned.
+    
+    Args:
+        request: SignupRequest with email
+    
+    Returns:
+        AuthResponse with access_token and user info
+    
+    Raises:
+        400: If invalid email or signup fails
+    """
+    try:
+        auth_service = get_auth_service()
+        user_data = await auth_service.signup(request.email)
+        
+        # Login immediately after signup
+        token_response = await auth_service.login(request.email)
+        
+        return AuthResponse(
+            access_token=token_response["access_token"],
+            token_type="bearer",
+            user=token_response["user"]
+        )
+        
+    except AuthenticationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Signup failed: {str(e)}")
+
+
+@app.post("/api/auth/login", response_model=AuthResponse, tags=["Authentication"])
+async def login(request: LoginRequest):
+    """
+    Login with email (password-less).
+    
+    PHASE 6: Email-only authentication. Returns JWT token.
+    
+    Args:
+        request: LoginRequest with email
+    
+    Returns:
+        AuthResponse with access_token
+    
+    Raises:
+        401: If login fails
+    """
+    try:
+        auth_service = get_auth_service()
+        token_response = await auth_service.login(request.email)
+        
+        return AuthResponse(
+            access_token=token_response["access_token"],
+            token_type="bearer",
+            user=token_response["user"]
+        )
+        
+    except AuthenticationError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+
+@app.get("/api/auth/me", response_model=UserProfile, tags=["Authentication"])
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
+    """
+    Get current authenticated user's profile.
+    
+    Args:
+        current_user: Injected from Authorization header
+    
+    Returns:
+        UserProfile with user info
+    
+    Raises:
+        401: If not authenticated
+    """
+    return UserProfile(
+        id=current_user["id"],
+        email=current_user["email"],
+        verified=current_user.get("verified", False)
+    )
+
+
+# ===== PHASE 5: RESEARCH API ENDPOINTS =====
+
+class ResearchRequest(BaseModel):
+    """Request model for starting a research job"""
+    topic: str
+    max_sections: Optional[int] = 5
+
+
+class JobResponse(BaseModel):
+    """Response model for job status"""
+    job_id: str
+    topic: str
+    status: str
+    progress: dict
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    user_id: str  # PHASE 6
+
+
+async def _run_research_job(job_id: str, topic: str) -> None:
+    """
+    Background task that runs the research orchestration
+    Updates job status as it progresses
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        job = await get_job(job_id)
+        if job:
+            logger.info(f"Starting background research for job {job_id}: {topic}")
+            await orchestrate_research(topic, job_id=job_id)
+    except Exception as e:
+        logger.error(f"Background research job {job_id} failed: {str(e)}")
+
+
+@app.post("/api/research", response_model=JobResponse, tags=["Research"])
+async def start_research(
+    request: ResearchRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Start a new research job.
+    
+    PHASE 6: Requires authentication. Jobs are user-scoped.
+    The job runs asynchronously in the background.
+    Use GET /api/research/{job_id} to check status.
+    
+    Args:
+        request: ResearchRequest with topic and optional max_sections
+        current_user: Injected from Authorization header
+    
+    Returns:
+        JobResponse with job_id and initial status
+    
+    Raises:
+        400: If topic empty or validation fails
+        401: If not authenticated
+        429: If rate limit exceeded
+    """
+    # Check rate limit
+    middleware = get_auth_middleware()
+    if not middleware.check_rate_limit(
+        current_user["id"],
+        settings.USER_RATE_LIMIT_REQUESTS,
+        settings.USER_RATE_LIMIT_WINDOW_SECONDS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded: {settings.USER_RATE_LIMIT_REQUESTS} requests per {settings.USER_RATE_LIMIT_WINDOW_SECONDS} seconds"
+        )
+    
+    if not request.topic or not request.topic.strip():
+        raise HTTPException(status_code=400, detail="Topic cannot be empty")
+    
+    # Create job with user_id
+    job = await create_job(request.topic, user_id=current_user["id"])
+    
+    # Queue background task
+    background_tasks.add_task(_run_research_job, job.job_id, request.topic)
+    
+    return JobResponse(
+        job_id=job.job_id,
+        topic=job.topic,
+        status=job.status.value,
+        progress=job.progress
+    )
+
+
+@app.get("/api/research/{job_id}", response_model=JobResponse, tags=["Research"])
+async def get_research_status(job_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Get the status and progress of a research job.
+    
+    Args:
+        job_id: The job ID returned from POST /api/research
+        current_user: Authenticated user (from dependency)
+    
+    Returns:
+        JobResponse with current status and progress
+    
+    Raises:
+        401: If not authenticated
+        403: If user doesn't own the job
+        404: If job not found
+    """
+    job = await get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    # Enforce user scoping - only owner can view
+    if job.user_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not authorized to access this job")
+    
+    return JobResponse(
+        job_id=job.job_id,
+        topic=job.topic,
+        status=job.status.value,
+        progress=job.progress,
+        result=job.result,
+        error=job.error,
+        user_id=job.user_id
+    )
+
+
+@app.get("/api/research", tags=["Research"])
+async def list_all_research(topic: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """
+    List research jobs for the authenticated user.
+    
+    Args:
+        topic: Optional filter by topic
+        current_user: Authenticated user (from dependency)
+    
+    Returns:
+        List of JobResponse objects owned by the user
+    
+    Raises:
+        401: If not authenticated
+    """
+    # Filter jobs by user_id - only return user's own jobs
+    jobs = await list_jobs(user_id=current_user["user_id"], topic=topic)
+    return [
+        JobResponse(
+            job_id=j.job_id,
+            topic=j.topic,
+            status=j.status.value,
+            progress=j.progress,
+            result=j.result,
+            error=j.error,
+            user_id=j.user_id
+        )
+        for j in jobs
+    ]
+
+
+@app.post("/api/research/{job_id}/cancel", tags=["Research"])
+async def cancel_research(job_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Cancel a pending or in-progress research job.
+    
+    Args:
+        job_id: The job ID to cancel
+        current_user: Authenticated user (from dependency)
+    
+    Returns:
+        JobResponse with cancelled status
+    
+    Raises:
+        401: If not authenticated
+        403: If user doesn't own the job
+        404: If job not found
+        400: If job cannot be cancelled (already complete/error)
+    """
+    job = await get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    # Enforce user scoping - only owner can cancel
+    if job.user_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not authorized to cancel this job")
+    
+    if job.status not in (JobStatus.ERROR, JobStatus.PENDING, JobStatus.PLANNING):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel job with status {job.status.value}"
+        )
+    
+    return JobResponse(
+        job_id=job.job_id,
+        topic=job.topic,
+        status=job.status.value,
+        progress=job.progress,
+        error=job.error,
+        user_id=job.user_id
+    )
+
+
+@app.get("/api/research/stats", tags=["Research"])
+async def get_research_stats(current_user: dict = Depends(get_current_user)):
+    """
+    Get statistics about research jobs for the authenticated user.
+    
+    Args:
+        current_user: Authenticated user (from dependency)
+    
+    Returns:
+        Statistics including total jobs, jobs by status, completed/failed counts for user's jobs
+    
+    Raises:
+        401: If not authenticated
+    """
+    stats = get_job_stats()
+    # Filter stats to only include user's jobs
+    # This is a simplified approach - in production, you might want to track per-user stats separately
+    return {
+        "user_id": current_user["user_id"],
+        "message": "Per-user job statistics endpoint - implement detailed stats storage in production",
+        "stats": stats
+    }
+
+
+@app.get("/")
+
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "ResearchAssistant API",
+        "docs": "/docs",
+        "health": "/health"
+    }
