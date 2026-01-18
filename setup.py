@@ -23,7 +23,7 @@ setup(
         "langchain>=0.1.0",
         "langchain-community>=0.0.20",
         "langchain-openai>=0.0.5",
-        "duckduckgo-search>=5.0.0",
+        "ddgs>=1.0.0",
         "beautifulsoup4>=4.12.0",
         "requests>=2.31.0",
         "lxml>=4.9.0",

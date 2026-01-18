@@ -3,9 +3,12 @@
 import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
+
+try:
+    from langchain_openai import ChatOpenAI
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
 
 
 logger = logging.getLogger(__name__)
@@ -37,9 +40,9 @@ class ReportWritingAgent:
         self.temperature = temperature
         self.api_key = api_key
         
-        # Initialize LLM only if API key is provided
+        # Initialize LLM only if API key is provided and LangChain is available
         self.llm = None
-        if api_key:
+        if api_key and LANGCHAIN_AVAILABLE:
             try:
                 self.llm = ChatOpenAI(
                     model_name=model_name,
@@ -97,25 +100,24 @@ class ReportWritingAgent:
         # Prepare context from papers
         context = self._prepare_context(search_results, paper_contents)
         
-        # Create summary
-        summary_prompt = PromptTemplate(
-            input_variables=["topic", "context"],
-            template="""You are a research assistant. Write a concise summary (2-3 paragraphs) about {topic} based on the following research materials:
+        # Create summary using direct LLM call
+        summary_prompt = f"""You are a research assistant. Write a concise summary (2-3 paragraphs) about {topic} based on the following research materials:
 
-{context}
+{context[:8000]}
 
 Summary:"""
-        )
         
-        summary_chain = LLMChain(llm=self.llm, prompt=summary_prompt)
-        summary = summary_chain.run(topic=topic, context=context[:8000])
+        try:
+            summary_response = self.llm.invoke(summary_prompt)
+            summary = summary_response.content if hasattr(summary_response, 'content') else str(summary_response)
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}")
+            summary = f"Research on {topic} based on {len(search_results)} sources."
         
         # Create detailed analysis
-        analysis_prompt = PromptTemplate(
-            input_variables=["topic", "context"],
-            template="""You are a research assistant. Write a detailed analysis of {topic} based on the following research materials:
+        analysis_prompt = f"""You are a research assistant. Write a detailed analysis of {topic} based on the following research materials:
 
-{context}
+{context[:8000]}
 
 Include:
 1. Background and context
@@ -125,24 +127,28 @@ Include:
 5. Future directions
 
 Detailed Analysis:"""
-        )
         
-        analysis_chain = LLMChain(llm=self.llm, prompt=analysis_prompt)
-        detailed_analysis = analysis_chain.run(topic=topic, context=context[:8000])
+        try:
+            analysis_response = self.llm.invoke(analysis_prompt)
+            detailed_analysis = analysis_response.content if hasattr(analysis_response, 'content') else str(analysis_response)
+        except Exception as e:
+            logger.error(f"Error generating analysis: {e}")
+            detailed_analysis = "Analysis could not be generated."
         
         # Extract key findings
-        findings_prompt = PromptTemplate(
-            input_variables=["topic", "context"],
-            template="""Based on the research about {topic}, list 5-7 key findings:
+        findings_prompt = f"""Based on the research about {topic}, list 5-7 key findings:
 
-{context}
+{context[:8000]}
 
 Key Findings (one per line, starting with -):"""
-        )
         
-        findings_chain = LLMChain(llm=self.llm, prompt=findings_prompt)
-        findings_text = findings_chain.run(topic=topic, context=context[:8000])
-        key_findings = [line.strip('- ').strip() for line in findings_text.split('\n') if line.strip().startswith('-')]
+        try:
+            findings_response = self.llm.invoke(findings_prompt)
+            findings_text = findings_response.content if hasattr(findings_response, 'content') else str(findings_response)
+            key_findings = [line.strip('- ').strip() for line in findings_text.split('\n') if line.strip().startswith('-')]
+        except Exception as e:
+            logger.error(f"Error generating findings: {e}")
+            key_findings = [result.get('title', '') for result in search_results[:7] if result.get('title')]
         
         # Collect references
         references = [result.get('url', '') for result in search_results if result.get('url')]
