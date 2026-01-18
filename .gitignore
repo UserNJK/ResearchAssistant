@@ -55,3 +55,15 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+*.pyc
+*.pyo
+.venv/
+.env
+
+# Node
+node_modules/
+.next/
+out/
+
+# OS
+.DS_Store
