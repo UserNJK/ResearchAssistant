@@ -28,7 +28,6 @@ setup(
         "requests>=2.31.0",
         "lxml>=4.9.0",
         "pypdf>=4.0.0",
-        "PyPDF2>=3.0.0",
         "python-docx>=1.1.0",
         "markdown>=3.5.0",
         "python-dotenv>=1.0.0",

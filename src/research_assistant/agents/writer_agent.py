@@ -45,7 +45,7 @@ class ReportWritingAgent:
         if api_key and LANGCHAIN_AVAILABLE:
             try:
                 self.llm = ChatOpenAI(
-                    model_name=model_name,
+                    model=model_name,
                     temperature=temperature,
                     openai_api_key=api_key
                 )

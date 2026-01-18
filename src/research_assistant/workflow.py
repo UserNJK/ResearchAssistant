@@ -1,10 +1,9 @@
 """Main research workflow orchestrating all agents."""
 
 import logging
-from typing import TypedDict, Annotated, List, Dict, Any
+from typing import TypedDict, List, Dict, Any
 from pathlib import Path
 from datetime import datetime
-import operator
 
 from langgraph.graph import StateGraph, END
 
