@@ -22,7 +22,42 @@ class OpenRouterError(Exception):
 _response_cache: OrderedDict[str, str] = OrderedDict()
 _cache_max_size = 100
 
-# Rate limiting tracking,
+# Rate limiting tracking
+_last_call_time = 0.0
+_min_call_interval = 0.5  # seconds
+
+
+def _get_cache_key(prompt: str, model: str, temperature: float, max_tokens: int) -> str:
+    """Generate a cache key from request parameters"""
+    key_str = f"{prompt}|{model}|{temperature}|{max_tokens}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def _check_rate_limit() -> None:
+    """
+    Enforce minimum interval between API calls
+    Raises OpenRouterError if called too quickly
+    """
+    global _last_call_time
+    
+    current_time = time.time()
+    time_since_last_call = current_time - _last_call_time
+    
+    if _last_call_time > 0 and time_since_last_call < _min_call_interval:
+        wait_time = _min_call_interval - time_since_last_call
+        raise OpenRouterError(
+            f"Rate limit: Please wait {wait_time:.1f}s before next call "
+            f"(minimum {_min_call_interval}s interval)"
+        )
+    
+    _last_call_time = current_time
+
+
+async def call_llm(
+    prompt: str,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
     use_cache: bool = True
 ) -> str:
     """
@@ -66,53 +101,6 @@ _cache_max_size = 100
     except OpenRouterError as e:
         logger.warning(str(e))
         raise
-    Enforce minimum interval between API calls
-    Raises OpenRouterError if called too quickly
-    """
-    global _last_call_time
-    
-    current_time = time.time()
-    time_since_last_call = current_time - _last_call_time
-    
-    if _last_call_time > 0 and time_since_last_call < _min_call_interval:
-        wait_time = _min_call_interval - time_since_last_call
-        raise OpenRouterError(
-            f"Rate limit: Please wait {wait_time:.1f}s before next call "
-            f"(minimum {_min_call_interval}s interval)"
-        )
-    
-    _last_call_time = current_time
-
-
-async def call_llm(
-    prompt: str,
-    model: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None
-) -> str:
-    """
-    Call an LLM via OpenRouter API with retry and fallback logic
-    
-    Args:
-        prompt: The text prompt to send to the LLM
-        model: Model identifier (defaults to config default)
-        temperature: Sampling temperature (defaults to config default)
-        max_tokens: Maximum tokens in response (defaults to config default)
-    
-    Returns:
-        str: The LLM's response text
-    
-    Raises:
-        OpenRouterError: If the API call fails after retries
-    """
-    # Use defaults from config if not provided
-    model = model or settings.DEFAULT_FALLBACK_MODEL
-    temperature = temperature if temperature is not None else settings.LLM_TEMPERATURE
-    max_tokens = max_tokens or settings.LLM_MAX_TOKENS
-    
-    # Validate OpenRouter API key
-    if not settings.OPENROUTER_API_KEY:
-        raise OpenRouterError("OPENROUTER_API_KEY not configured")
     
     # Prepare request payload
     payload = {
@@ -120,6 +108,25 @@ async def call_llm(
         "messages": [
             {
                 "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/ResearchAssistant",
+        "X-Title": "ResearchAssistant"
+    }
+    
+    # First attempt with specified model
+    try:
+        logger.info(f"Calling OpenRouter API with model: {model}")
+        response = await _make_api_call(payload, headers)
         
         # Cache successful response
         if use_cache:
@@ -131,7 +138,14 @@ async def call_llm(
     except OpenRouterError as e:
         logger.warning(f"First attempt failed with {model}: {e}")
         
-        # Provid
+        # Retry once with fallback model if different from original
+        if model != settings.DEFAULT_FALLBACK_MODEL:
+            logger.info(f"Retrying with fallback model: {settings.DEFAULT_FALLBACK_MODEL}")
+            payload["model"] = settings.DEFAULT_FALLBACK_MODEL
+            
+            try:
+                response = await _make_api_call(payload, headers)
+                
                 # Cache successful fallback response
                 if use_cache:
                     cache_key = _get_cache_key(prompt, settings.DEFAULT_FALLBACK_MODEL, temperature, max_tokens)
@@ -149,174 +163,135 @@ async def call_llm(
                         f"https://openrouter.ai/settings/keys"
                     )
                 
-                f"OpenRouter API quota exceeded. This is normal for free-tier keys. "
-                f"Solutions: (1) Wait for quota reset, (2) Get new key from https://openrouter.ai/settings/keys, "
-                f"or (3) Add credits. Original error: {e}"
-            
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False  # No streaming as per requirements
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/ResearchAssistant",  # Optional: for rankings
-        "X-Title": "ResearchAssistant"  # Optional: for rankings
-    }
-    
-    # First attempt with specified model
-    try:
-        logger.info(f"Calling OpenRouter API with model: {model}")
-        response = await _make_api_call(payload, headers)
-        return response
-    except OpenRouterError as e:
-        logger.warning(f"First attempt failed with {model}: {e}")
-        
-        # Retry once with fallback model if different from original
-        if model != settings.DEFAULT_FALLBACK_MODEL:
-            logger.info(f"Retrying with fallback model: {settings.DEFAULT_FALLBACK_MODEL}")
-            payload["model"] = settings.DEFAULT_FALLBACK_MODEL
-            
-            try:
-                response = await _make_api_call(payload, headers)
-                return response
-            except OpenRouterError as retry_error:
-                logger.error(f"Fallback attempt also failed: {retry_error}")
                 raise OpenRouterError(
                     f"LLM call failed after retry. Original: {e}, Fallback: {retry_error}"
                 )
         else:
-            # Al
-                # Provide context for common errors
-                if response.status_code == 403:
-                    raise OpenRouterError(
-                        f"API quota/limit exceeded (403). Free-tier keys have usage limits. "
-                        f"Check https://openrouter.ai/settings/keys for usage stats. Detail: {error_detail}"
-                    )
-                elif response.status_code == 401:
-                    raise OpenRouterError(
-                        f"Invalid API key (401). Get a valid key from https://openrouter.ai/settings/keys"
-                    )
-                elif response.status_code == 429:
-                    raise OpenRouterError(
-                        f"Rate limit exceeded (429). Wait before making more requests. Detail: {error_detail}"
-                    )
-                else:
-                    raise OpenRouterError(
-                        f"API returned status {response.status_code}: {error_detail}"
-    
+            # Already using fallback model
+            if "limit exceeded" in str(e).lower() or "403" in str(e):
+                raise OpenRouterError(
+                    f"OpenRouter API quota exceeded. This is normal for free-tier keys. "
+                    f"Solutions: (1) Wait for quota reset, (2) Get new key from https://openrouter.ai/settings/keys, "
+                    f"or (3) Add credits. Original error: {e}"
+                )
+            raise
+
 
 async def _make_api_call(payload: Dict[str, Any], headers: Dict[str, str]) -> str:
     """
-    Internal function to make the actual HTTP request to OpenRouter
+    Make the actual HTTP request to OpenRouter API
     
     Args:
-        payload: Request body
-        headers: Request headers
+        payload: The request payload
+        headers: The request headers
     
     Returns:
-        str: The LLM response text
+        str: The LLM's response text
     
     Raises:
-        OpenRouterError: If the request fails
+        OpenRouterError: If the API call fails
     """
-    async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
-        try:
+    timeout = httpx.Timeout(settings.LLM_TIMEOUT_SECONDS, read=settings.LLM_TIMEOUT_SECONDS + 10)
+    
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 f"{settings.OPENROUTER_BASE_URL}/chat/completions",
                 json=payload,
                 headers=headers
             )
             
-            # Check for HTTP errors
-            if response.status_code != 200:
-                error_detail = response.text
-                logger.error(f"OpenRouter API error ({response.status_code}): {error_detail}")
+            if response.status_code == 200:
+                data = response.json()
+                
+                if "choices" in data and len(data["choices"]) > 0:
+                    content = data["choices"][0]["message"]["content"]
+                    logger.debug(f"Received response: {content[:100]}...")
+                    return content
+                else:
+                    raise OpenRouterError("Invalid response format: missing choices")
+            
+            elif response.status_code == 403:
+                raise OpenRouterError("API quota exceeded (403)")
+            
+            elif response.status_code == 401:
+                raise OpenRouterError("Invalid API key (401)")
+            
+            elif response.status_code == 429:
+                raise OpenRouterError("Rate limit exceeded (429)")
+            
+            else:
+                error_text = response.text
                 raise OpenRouterError(
-                    f"API returned status {response.status_code}: {error_detail}"
+                    f"API call failed with status {response.status_code}: {error_text}"
                 )
-            
-            # Parse response
-            data = response.json()
-            
-            # Extract message content
-            if "choices" not in data or len(data["choices"]) == 0:
-                raise OpenRouterError("No choices returned from API")
-            
-            message = data["choices"][0].get("message", {})
-            content = message.get("content", ""), use_cache=True)
-        return {
-            "status": "success",
-            "model": settings.DEFAULT_FALLBACK_MODEL,
-            "response": response,
-            "message": "OpenRouter connection successful",
-            "cache_info": {
-                "size": len(_response_cache),
-                "max_size": _cache_max_size
-            }
-        }
-    except OpenRouterError as e:
-        return {
-            "status": "error",
-            "model": settings.DEFAULT_FALLBACK_MODEL,
-            "error": str(e),
-            "message": "OpenRouter connection failed",
-            "help": "Free-tier API limits are normal. Check https://openrouter.ai/settings/keys"
-        }
+    
+    except httpx.TimeoutException:
+        raise OpenRouterError(f"Request timed out after {settings.LLM_TIMEOUT_SECONDS}s")
+    
+    except httpx.RequestError as e:
+        raise OpenRouterError(f"Network error: {str(e)}")
+    
+    except Exception as e:
+        if isinstance(e, OpenRouterError):
+            raise
+        raise OpenRouterError(f"Unexpected error: {str(e)}")
+
+
+def _add_to_cache(key: str, value: str) -> None:
+    """Add a response to the cache, removing oldest if at capacity"""
+    if len(_response_cache) >= _cache_max_size:
+        _response_cache.popitem(last=False)  # Remove oldest (FIFO)
+    _response_cache[key] = value
 
 
 def clear_cache() -> int:
     """
     Clear the response cache
-    Returns number of entries cleared
+    
+    Returns:
+        int: Number of entries cleared
     """
-    global _response_cache
-    size = len(_response_cache)
+    count = len(_response_cache)
     _response_cache.clear()
-    logger.info(f"Cleared {size} cached responses")
-    return size
+    logger.info(f"Cleared {count} cached responses")
+    return count
 
 
 def get_cache_stats() -> Dict[str, Any]:
     """
     Get cache statistics
-    Returns cache size and configuration
+    
+    Returns:
+        dict: Cache statistics including size, max size, hit rate estimate
     """
     return {
-        "current_size": len(_response_cache),
-        "max_size": _cache_max_size,
+        "cache_size": len(_response_cache),
+        "max_cache_size": _cache_max_size,
         "rate_limit_interval": _min_call_interval,
         "last_call_time": _last_call_time
-        raise OpenRouterError(f"Network error: {str(e)}")
-        except KeyError as e:
-            raise OpenRouterError(f"Unexpected response format: missing {str(e)}")
-        except Exception as e:
-            raise OpenRouterError(f"Unexpected error: {str(e)}")
+    }
 
 
 async def test_llm_connection() -> Dict[str, Any]:
     """
-    Test the OpenRouter connection with a simple prompt
-    Useful for health checks and diagnostics
+    Test the LLM connection with a simple prompt
     
     Returns:
-        dict: Test results with status and response info
+        dict: Test result with status and message
     """
-    test_prompt = "Say 'Hello' in one word."
-    
     try:
-        response = await call_llm(test_prompt, max_tokens=10)
+        response = await call_llm(
+            "Say 'Hello' and nothing else.",
+            use_cache=False
+        )
         return {
             "status": "success",
-            "model": settings.DEFAULT_FALLBACK_MODEL,
-            "response": response,
-            "message": "OpenRouter connection successful"
+            "message": "LLM connection successful",
+            "response": response
         }
     except OpenRouterError as e:
         return {
             "status": "error",
-            "model": settings.DEFAULT_FALLBACK_MODEL,
-            "error": str(e),
-            "message": "OpenRouter connection failed"
+            "message": str(e)
         }

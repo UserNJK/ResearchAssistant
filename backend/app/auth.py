@@ -183,7 +183,9 @@ class AuthService:
             payload = jwt.decode(
                 token,
                 settings.SUPABASE_SERVICE_ROLE_KEY or "dev-secret-key",
-                algorithms=[settings.JWT_ALGORITHM]
+                algorithms=[settings.JWT_ALGORITHM],
+                audience="authenticated",
+                options={"verify_aud": True}
             )
             
             logger.debug(f"Token verified for user {payload.get('email')}")

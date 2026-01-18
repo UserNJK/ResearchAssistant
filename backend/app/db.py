@@ -20,18 +20,14 @@ class SupabaseDB:
     
     def _initialize_client(self) -> None:
         """Create Supabase client connection"""
-        try:
-            if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
-                self.client = create_client(
-                    supabase_url=settings.SUPABASE_URL,
-                    supabase_key=settings.SUPABASE_SERVICE_ROLE_KEY
-                )
-                logger.info("Supabase client initialized successfully")
-            else:
-                logger.warning("Supabase credentials not configured - running in stub mode")
-        except Exception as e:
-            logger.error(f"Failed to initialize Supabase client: {e}")
-            raise
+        if settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
+            self.client = create_client(
+                supabase_url=settings.SUPABASE_URL,
+                supabase_key=settings.SUPABASE_SERVICE_ROLE_KEY
+            )
+            logger.info("Supabase client initialized successfully")
+        else:
+            raise ValueError("Supabase credentials not configured")
     
     def is_connected(self) -> bool:
         """Check if Supabase client is connected"""

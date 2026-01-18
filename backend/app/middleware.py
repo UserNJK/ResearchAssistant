@@ -12,7 +12,8 @@ Features:
 import logging
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer
+from fastapi.security.http import HTTPAuthorizationCredentials
 import time
 
 from .auth import get_auth_service, AuthenticationError

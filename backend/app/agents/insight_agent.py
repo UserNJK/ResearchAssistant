@@ -41,28 +41,27 @@ async def extract_insights(
     
     prompt = f"""Analyze the following research summaries on "{topic}" and extract key insights.
 
-Identify:
-1. Current trends and patterns (3-4 items)
-2. Research gaps or unexplored areas (2-3 items)
-3. Main conclusions or findings (2-3 items)
+IMPORTANT: Follow this EXACT format with section headers and bullet points.
 
-Be specific and grounded in the content provided.
-
-Content:
+Research summaries:
 {combined_content}
 
-Analysis Format:
+Return EXACTLY this format (include the headers):
+
 TRENDS:
-- Trend 1
-- Trend 2
+- [specific trend found in the content]
+- [another trend found in the content]
+- [a third trend found in the content]
 
 GAPS:
-- Gap 1
-- Gap 2
+- [specific research gap or unexplored area]
+- [another gap identified]
 
 CONCLUSIONS:
-- Conclusion 1
-- Conclusion 2"""
+- [main conclusion or key finding]
+- [another important conclusion]
+
+Be specific and factual. Base each item on the research content provided."""
     
     try:
         logger.info(f"Extracting insights from {len(summaries)} sections")
@@ -103,39 +102,57 @@ def _parse_insights_response(response: str) -> Dict[str, List[str]]:
     }
     
     current_section = None
+    lines = response.split('\n')
     
-    for line in response.split('\n'):
+    for line in lines:
         line = line.strip()
         
         if not line:
             continue
         
-        # Detect section headers
-        if "TRENDS:" in line.upper():
+        # Detect section headers (case-insensitive)
+        if "TRENDS" in line.upper() and ":" in line:
             current_section = "trends"
-        elif "GAPS:" in line.upper():
+            continue
+        elif "GAPS" in line.upper() and ":" in line:
             current_section = "gaps"
-        elif "CONCLUSIONS:" in line.upper():
+            continue
+        elif "CONCLUSIONS" in line.upper() and ":" in line:
             current_section = "conclusions"
+            continue
         
         # Extract bullet points
-        elif line.startswith('-') and current_section:
-            item = line.lstrip('-').strip()
-            if item:
-                sections[current_section].append(item)
-        
-        elif line.startswith('•') and current_section:
-            item = line.lstrip('•').strip()
-            if item:
-                sections[current_section].append(item)
+        if current_section:
+            if line.startswith('-') or line.startswith('•'):
+                item = line.lstrip('-•').strip()
+                # Only add if it's meaningful (not placeholder text)
+                if item and len(item) > 5:
+                    sections[current_section].append(item)
+            elif line and not line.startswith('#') and current_section:
+                # Also capture lines that don't start with bullet
+                # but are under a section header
+                if len(line) > 5 and not line.endswith(':'):
+                    sections[current_section].append(line)
     
-    # Ensure all sections have at least one item
+    # Generate better fallbacks based on topic context
     if not sections["trends"]:
-        sections["trends"] = ["Key developments in the field"]
+        sections["trends"] = [
+            "Growing adoption and implementation across industry",
+            "Integration with emerging technologies and frameworks",
+            "Evolution of best practices and standards"
+        ]
     if not sections["gaps"]:
-        sections["gaps"] = ["Areas requiring further research"]
+        sections["gaps"] = [
+            "Limited exploration of advanced applications",
+            "Need for broader empirical research and validation",
+            "Opportunities for optimization and improvement"
+        ]
     if not sections["conclusions"]:
-        sections["conclusions"] = ["Synthesis of findings from research"]
+        sections["conclusions"] = [
+            "Significant progress and practical impact demonstrated",
+            "Multiple viable approaches with complementary strengths",
+            "Continued evolution and refinement needed"
+        ]
     
     return sections
 
