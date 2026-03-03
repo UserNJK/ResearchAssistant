@@ -2,58 +2,71 @@
 
 AI-powered research assistant that generates comprehensive research reports using multi-agent architecture.
 
-## Quick Start
+## Quick Start (Windows PowerShell)
 
-### Backend Setup (FastAPI)
+### 1) One-time setup
 
-1. Create virtual environment:
-   ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+#### Backend (FastAPI)
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```powershell
+cd D:\Projects\ResearchAssistant\backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 
-3. Configure environment:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your actual keys
-   ```
+Create/update `backend/.env` with valid keys:
 
-4. Run development server:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+- `OPENROUTER_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CORS_ORIGINS=http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001`
 
-5. Verify health check:
-   ```bash
-   curl http://localhost:8000/health
-   ```
+#### Frontend (Next.js)
 
-### Frontend Setup (Next.js)
+```powershell
+cd D:\Projects\ResearchAssistant\frontend
+npm install
+```
 
-1. Install dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
+Create/update `frontend/.env.local`:
 
-2. Configure environment:
-   ```bash
-   cp .env.local.example .env.local
-   # Edit .env.local with your actual keys
-   ```
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-3. Run development server:
-   ```bash
-   npm run dev
-   ```
+### 2) Run the project (every time)
 
-4. Open browser: http://localhost:3000
+Open **two terminals**.
+
+#### Terminal 1: backend
+
+```powershell
+cd D:\Projects\ResearchAssistant\backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+#### Terminal 2: frontend
+
+```powershell
+cd D:\Projects\ResearchAssistant\frontend
+npm run dev
+```
+
+### 3) Open in browser
+
+- Frontend: `http://localhost:3000` (or `http://localhost:3001` if 3000 is already in use)
+- Backend health: `http://127.0.0.1:8000/health`
+
+## Troubleshooting
+
+- **Auth says "Authentication failed" while backend is healthy**
+  - Usually CORS mismatch when frontend runs on port 3001.
+  - Ensure `CORS_ORIGINS` in `backend/.env` includes both `3000` and `3001` (see above), then restart backend.
+
+- **`uvicorn` command fails or uses wrong Python**
+  - Use the explicit interpreter command:
+  - `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
 
 ## Tech Stack
 
