@@ -68,6 +68,35 @@ npm run dev
   - Use the explicit interpreter command:
   - `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
 
+## Deploy on Vercel (Frontend)
+
+This repository is best deployed as:
+
+- **Frontend** on Vercel (Next.js)
+- **Backend** on a persistent Python host (Render/Railway/Fly/Azure)
+
+### Why this split?
+
+The backend runs multi-step research orchestration and can exceed serverless limits. Vercel is ideal for the Next.js frontend, while a long-running backend host is more reliable for research jobs.
+
+### Step-by-step
+
+1. Push your repo to GitHub.
+2. In Vercel, **New Project** → import this repo.
+3. Set **Root Directory** to `frontend`.
+4. Add frontend env var in Vercel:
+  - `NEXT_PUBLIC_API_URL=https://<your-backend-domain>`
+5. Deploy.
+
+### Backend CORS for Vercel
+
+Set these backend env vars on your backend host:
+
+- `CORS_ORIGINS=http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,https://<your-vercel-production-domain>`
+- `CORS_ORIGIN_REGEX=https://.*\.vercel\.app`
+
+`CORS_ORIGIN_REGEX` allows preview deployments (`*.vercel.app`) without editing env vars on every commit.
+
 ## Tech Stack
 
 - **Backend**: FastAPI + Python 3.11+

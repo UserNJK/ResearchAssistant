@@ -125,8 +125,30 @@ npm start
 
 The built app can be deployed to Vercel or any Node.js hosting.
 
+## Vercel Deployment
+
+### Deploy frontend
+
+1. Push repo to GitHub.
+2. In Vercel, create a new project from this repo.
+3. Set **Root Directory** to `frontend`.
+4. Add environment variable:
+
+```env
+NEXT_PUBLIC_API_URL=https://<your-backend-domain>
+```
+
+5. Deploy.
+
+### Backend requirements
+
+Deploy backend on Render/Railway/Fly/Azure and configure CORS to allow your Vercel app:
+
+- `CORS_ORIGINS` should include your production Vercel domain.
+- `CORS_ORIGIN_REGEX=https://.*\.vercel\.app` is recommended to allow preview deployments.
+
 ## Deployment Notes
 
-- **Environment Variable**: Update `NEXT_PUBLIC_API_URL` for production backend URL
-- **CORS**: Backend must allow requests from frontend domain
-- **Token Security**: Tokens stored in memory (cleared on page refresh)
+- **Environment Variable**: Set `NEXT_PUBLIC_API_URL` to your production backend URL.
+- **CORS**: Backend must allow requests from frontend domain and previews.
+- **Token Security**: Tokens stored in memory (cleared on page refresh).

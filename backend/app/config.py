@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # CORS
     # =========================
     CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGIN_REGEX: str = ""
 
     # =========================
     # Global Rate Limiting
